@@ -1,0 +1,600 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "azuretables_1_Connection_Name": {
+      "type": "string",
+      "defaultValue": "azuretables"
+    },
+    "azuretables_1_Connection_DisplayName": {
+      "type": "string",
+      "defaultValue": "azure_table_connection"
+    },
+    "azuretables_1_storageaccount": {
+      "type": "string",
+      "metadata": {
+        "description": "The name of your storage account"
+      },
+      "defaultValue": "steeldemostorage"
+    },
+    "azuretables_1_sharedkey": {
+      "type": "securestring",
+      "metadata": {
+        "description": "The shared storage key of your storage account"
+      }
+    },
+    "sharepointonline_1_Connection_Name": {
+      "type": "string",
+      "defaultValue": "sharepointonline-1"
+    },
+    "sharepointonline_1_Connection_DisplayName": {
+      "type": "string",
+      "defaultValue": "gtarpeh@thetarpehsgroup.onmicrosoft.com"
+    },
+    "sharepointonline_1_token:TenantId": {
+      "type": "string",
+      "metadata": {
+        "description": "The tenant ID of for the Azure Active Directory application"
+      }
+    },
+    "azureblob_1_Connection_Name": {
+      "type": "string",
+      "defaultValue": "azureblob"
+    },
+    "azureblob_1_Connection_DisplayName": {
+      "type": "string",
+      "defaultValue": "blobstorageconnection"
+    },
+    "azureblob_1_accountName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the storage account the connector should use."
+      },
+      "defaultValue": "steeldemostorage"
+    },
+    "azureblob_1_accessKey": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Specify a valid primary/secondary storage account access key."
+      }
+    },
+    "LogicAppLocation": {
+      "type": "string",
+      "minLength": 1,
+      "allowedValues": [
+        "[resourceGroup().location]",
+        "eastasia",
+        "southeastasia",
+        "centralus",
+        "eastus",
+        "eastus2",
+        "westus",
+        "northcentralus",
+        "southcentralus",
+        "northeurope",
+        "westeurope",
+        "japanwest",
+        "japaneast",
+        "brazilsouth",
+        "australiaeast",
+        "australiasoutheast",
+        "southindia",
+        "centralindia",
+        "westindia",
+        "canadacentral",
+        "canadaeast",
+        "uksouth",
+        "ukwest",
+        "westcentralus",
+        "westus2",
+        "koreacentral",
+        "koreasouth",
+        "francecentral",
+        "francesouth",
+        "uaecentral",
+        "southafricanorth",
+        "southafricawest"
+      ],
+      "defaultValue": "eastus"
+    },
+    "LogicAppName": {
+      "type": "string",
+      "minLength": 1,
+      "defaultValue": "HighValueLogicAppV2"
+    }
+  },
+  "variables": {},
+  "resources": [
+    {
+      "properties": {
+        "state": "Enabled",
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "actions": {
+            "Blob_Data": {
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "BlobData",
+                    "type": "string"
+                  }
+                ]
+              },
+              "runAfter": {
+                "High_Value_Key_Tracker": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Blob_File_Name": {
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "BlobFileName",
+                    "type": "string",
+                    "value": "HighValueLicense_@{utcNow('yyyyMMdd hh:mm')}.csv"
+                  }
+                ]
+              },
+              "runAfter": {
+                "Create_CSV_table": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Create_CSV_table": {
+              "type": "Table",
+              "inputs": {
+                "from": "@body('Parse_JSON')",
+                "format": "CSV"
+              },
+              "runAfter": {
+                "Parse_JSON": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Create_blob": {
+              "type": "ApiConnection",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['azureblob']['connectionId']"
+                  }
+                },
+                "method": "post",
+                "body": "@body('Create_CSV_table')",
+                "headers": {
+                  "Content-Type": "text/csv"
+                },
+                "path": "/datasets/default/files",
+                "queries": {
+                  "folderPath": "/highvaluecontainer",
+                  "name": "@variables('BlobFileName')",
+                  "queryParametersSingleEncoded": true
+                }
+              },
+              "runAfter": {
+                "Blob_File_Name": [
+                  "Succeeded"
+                ]
+              },
+              "runtimeConfiguration": {
+                "contentTransfer": {
+                  "transferMode": "Chunked"
+                }
+              }
+            },
+            "For_each": {
+              "type": "Foreach",
+              "foreach": "@body('Get_Data_From_Sharepoint')?['value']",
+              "actions": {
+                "Condition": {
+                  "type": "If",
+                  "expression": {
+                    "and": [
+                      {
+                        "less": [
+                          "@variables('LastFetchId')",
+                          "@items('For_each')?['AccountID']"
+                        ]
+                      }
+                    ]
+                  },
+                  "actions": {
+                    "Append_to_string_variable": {
+                      "type": "AppendToStringVariable",
+                      "inputs": {
+                        "name": "BlobData",
+                        "value": "{\n\t\"Account_ID\":\"@{items('For_each')?['AccountID']}\",\n\t\"Date of Importation\":\"@{body('Parse_JSON_Data')?['Date of Importation']}\",\n\t\"Country of Origin\":\"@{body('Parse_JSON_Data')?['Country of Origin']}\",\n\t\"Category\":\"@{body('Parse_JSON_Data')?['Category']}\",\n\t\"HTS Code\":\"@{body('Parse_JSON_Data')?['HTS Code']}\",\n\t\"Value\":\"@{body('Parse_JSON_Data')?['Value']}\",\n\t\"Volume\":\"@{body('Parse_JSON_Data')?['Volume']}\",\n\t\"License_Number\":\"@{body('Parse_JSON_Data')?['License_Number']}\"\n},"
+                      },
+                      "runAfter": {
+                        "Parse_JSON_Data": [
+                          "Succeeded"
+                        ]
+                      }
+                    },
+                    "Parse_JSON_Data": {
+                      "type": "ParseJson",
+                      "inputs": {
+                        "content": "@items('For_each')?['JSONData']",
+                        "schema": {
+                          "properties": {
+                            "Category": {
+                              "type": "string"
+                            },
+                            "Country of Origin": {
+                              "type": "string"
+                            },
+                            "Date of Importation": {
+                              "type": "string"
+                            },
+                            "HTS Code": {
+                              "type": "string"
+                            },
+                            "License_Number": {
+                              "type": "string"
+                            },
+                            "Value": {
+                              "type": "string"
+                            },
+                            "Volume": {
+                              "type": "string"
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "runAfter": {
+                        "Set_Last_Fetch_Id": [
+                          "Succeeded"
+                        ]
+                      }
+                    },
+                    "Set_Last_Fetch_Id": {
+                      "type": "SetVariable",
+                      "inputs": {
+                        "name": "LastFetchId",
+                        "value": "@int(items('For_each')?['AccountID'])"
+                      },
+                      "runAfter": {}
+                    }
+                  },
+                  "runAfter": {}
+                },
+                "Set_variable": {
+                  "type": "SetVariable",
+                  "inputs": {
+                    "name": "IsNewDataAvailable",
+                    "value": true
+                  },
+                  "runAfter": {
+                    "Condition": [
+                      "Succeeded"
+                    ]
+                  }
+                }
+              },
+              "runAfter": {
+                "Get_Data_From_Sharepoint": [
+                  "Succeeded"
+                ]
+              },
+              "runtimeConfiguration": {
+                "concurrency": {
+                  "repetitions": 1
+                }
+              }
+            },
+            "Get_Data_From_Sharepoint": {
+              "runAfter": {
+                "Intialize_IsNewDataAvailable": [
+                  "Succeeded"
+                ]
+              },
+              "type": "ApiConnection",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+                  }
+                },
+                "method": "get",
+                "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://thetarpehsgroup.sharepoint.com/'))}/tables/@{encodeURIComponent(encodeURIComponent('942bb28c-e8f1-46b2-8502-76c40062f1cd'))}/items",
+                "queries": {
+                  "$filter": "AccountID gt @{variables('LastFetchId')}",
+                  "view": "538007eb-b839-480f-9f90-6077210e11f7"
+                }
+              }
+            },
+            "Get_High_Value_Tracker": {
+              "runAfter": {
+                "Blob_Data": [
+                  "Succeeded"
+                ]
+              },
+              "type": "ApiConnection",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['azuretables']['connectionId']"
+                  }
+                },
+                "method": "get",
+                "path": "/Tables/@{encodeURIComponent('Tracker')}/entities(PartitionKey='@{encodeURIComponent('1')}',RowKey='@{encodeURIComponent(variables('HighValueLicenseRowKey'))}')"
+              }
+            },
+            "High_Value_Key_Tracker": {
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "HighValueLicenseRowKey",
+                    "type": "string",
+                    "value": "HighValueLicenseKey"
+                  }
+                ]
+              },
+              "runAfter": {}
+            },
+            "Initialize_variable": {
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "LastFetchId",
+                    "type": "integer",
+                    "value": "@int(body('Get_High_Value_Tracker')?['LastFetchId'])"
+                  }
+                ]
+              },
+              "runAfter": {
+                "Get_High_Value_Tracker": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Initialize_variable_2": {
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "TempVariable",
+                    "type": "string",
+                    "value": "[@{substring(variables('BlobData'),0,lastIndexOf(variables('BlobData'),','))}]"
+                  }
+                ]
+              },
+              "runAfter": {
+                "check_IsNewDataAvailable_is_true_or_not": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Insert_or_Replace_Entity": {
+              "runAfter": {
+                "Create_blob": [
+                  "Succeeded"
+                ]
+              },
+              "type": "ApiConnection",
+              "inputs": {
+                "body": {
+                  "LastFetchId": "@variables('LastFetchId')"
+                },
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['azuretables']['connectionId']"
+                  }
+                },
+                "method": "put",
+                "path": "/Tables/@{encodeURIComponent('Tracker')}/entities(PartitionKey='@{encodeURIComponent('1')}',RowKey='@{encodeURIComponent(variables('HighValueLicenseRowKey'))}')"
+              }
+            },
+            "Intialize_IsNewDataAvailable": {
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "IsNewDataAvailable",
+                    "type": "boolean",
+                    "value": false
+                  }
+                ]
+              },
+              "runAfter": {
+                "Initialize_variable": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Parse_JSON": {
+              "type": "ParseJson",
+              "inputs": {
+                "content": "@variables('TempVariable')",
+                "schema": {
+                  "items": {
+                    "properties": {
+                      "Account_ID": {
+                        "type": "string"
+                      },
+                      "Category": {
+                        "type": "string"
+                      },
+                      "Country of Origin": {
+                        "type": "string"
+                      },
+                      "Date of Importation": {
+                        "type": "string"
+                      },
+                      "HTS Code": {
+                        "type": "string"
+                      },
+                      "License_Number": {
+                        "type": "string"
+                      },
+                      "Value": {
+                        "type": "string"
+                      },
+                      "Volume": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "Account_ID",
+                      "Date of Importation",
+                      "Country of Origin",
+                      "Category",
+                      "HTS Code",
+                      "Value",
+                      "Volume",
+                      "License_Number"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "runAfter": {
+                "Initialize_variable_2": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "check_IsNewDataAvailable_is_true_or_not": {
+              "type": "If",
+              "expression": {
+                "and": [
+                  {
+                    "equals": [
+                      "@variables('IsNewDataAvailable')",
+                      true
+                    ]
+                  }
+                ]
+              },
+              "actions": {},
+              "runAfter": {
+                "For_each": [
+                  "Succeeded"
+                ]
+              },
+              "else": {
+                "actions": {
+                  "Terminate": {
+                    "type": "Terminate",
+                    "inputs": {
+                      "runStatus": "Succeeded"
+                    },
+                    "runAfter": {}
+                  }
+                }
+              }
+            }
+          },
+          "parameters": {
+            "$connections": {
+              "defaultValue": {},
+              "type": "Object"
+            }
+          },
+          "triggers": {
+            "Recurrence": {
+              "type": "Recurrence",
+              "recurrence": {
+                "frequency": "Month",
+                "interval": 1,
+                "startTime": "2020-05-01T00:00:00Z"
+              }
+            }
+          },
+          "contentVersion": "1.0.0.0",
+          "outputs": {}
+        },
+        "parameters": {
+          "$connections": {
+            "value": {
+              "azureblob": {
+                "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', 'eastus', '/managedApis/', 'azureblob')]",
+                "connectionId": "[resourceId('Microsoft.Web/connections', parameters('azureblob_1_Connection_Name'))]",
+                "connectionName": "[parameters('azureblob_1_Connection_Name')]"
+              },
+              "sharepointonline": {
+                "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', 'eastus', '/managedApis/', 'sharepointonline')]",
+                "connectionId": "[resourceId('Microsoft.Web/connections', parameters('sharepointonline_1_Connection_Name'))]",
+                "connectionName": "[parameters('sharepointonline_1_Connection_Name')]"
+              },
+              "azuretables": {
+                "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', 'eastus', '/managedApis/', 'azuretables')]",
+                "connectionId": "[resourceId('Microsoft.Web/connections', parameters('azuretables_1_Connection_Name'))]",
+                "connectionName": "[parameters('azuretables_1_Connection_Name')]"
+              }
+            }
+          }
+        }
+      },
+      "name": "[parameters('LogicAppName')]",
+      "type": "Microsoft.Logic/workflows",
+      "location": "[parameters('LogicAppLocation')]",
+      "apiVersion": "2016-06-01",
+      "tags": {
+        "displayName": "LogicApp"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/connections', parameters('azureblob_1_Connection_Name'))]",
+        "[resourceId('Microsoft.Web/connections', parameters('sharepointonline_1_Connection_Name'))]",
+        "[resourceId('Microsoft.Web/connections', parameters('azuretables_1_Connection_Name'))]"
+      ]
+    },
+    {
+      "type": "MICROSOFT.WEB/CONNECTIONS",
+      "apiVersion": "2018-07-01-preview",
+      "name": "[parameters('azuretables_1_Connection_Name')]",
+      "location": "eastus",
+      "properties": {
+        "api": {
+          "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', 'eastus', '/managedApis/', 'azuretables')]"
+        },
+        "displayName": "[parameters('azuretables_1_Connection_DisplayName')]",
+        "parameterValues": {
+          "storageaccount": "[parameters('azuretables_1_storageaccount')]",
+          "sharedkey": "[parameters('azuretables_1_sharedkey')]"
+        }
+      }
+    },
+    {
+      "type": "MICROSOFT.WEB/CONNECTIONS",
+      "apiVersion": "2018-07-01-preview",
+      "name": "[parameters('sharepointonline_1_Connection_Name')]",
+      "location": "eastus",
+      "properties": {
+        "api": {
+          "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', 'eastus', '/managedApis/', 'sharepointonline')]"
+        },
+        "displayName": "[parameters('sharepointonline_1_Connection_DisplayName')]",
+        "nonSecretParameterValues": {
+          "token:TenantId": "[parameters('sharepointonline_1_token:TenantId')]"
+        }
+      }
+    },
+    {
+      "type": "MICROSOFT.WEB/CONNECTIONS",
+      "apiVersion": "2018-07-01-preview",
+      "name": "[parameters('azureblob_1_Connection_Name')]",
+      "location": "eastus",
+      "properties": {
+        "api": {
+          "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', 'eastus', '/managedApis/', 'azureblob')]"
+        },
+        "displayName": "[parameters('azureblob_1_Connection_DisplayName')]",
+        "parameterValues": {
+          "accountName": "[parameters('azureblob_1_accountName')]",
+          "accessKey": "[parameters('azureblob_1_accessKey')]"
+        }
+      }
+    }
+  ],
+  "outputs": {}
+}
